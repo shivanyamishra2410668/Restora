@@ -13,7 +13,7 @@ Restora is a vanilla JavaScript/Vite multi-tenant restaurant operations app back
 
 The browser bundle only reads the public key. Never add `service_role` keys to `.env.local` or frontend files. Email confirmation is currently disabled in the connected Supabase project as requested. The auth trigger records an owner application during signup.
 
-Product photos upload directly to Cloudinary using an unsigned upload preset. Supabase stores each returned `secure_url` in `products.image_url`; the public menu loads optimized Cloudinary image URLs. Never put a Cloudinary API secret in browser code.
+Product photos upload directly to Cloudinary using an unsigned upload preset. Supabase stores the gallery in `products.image_urls` and keeps the cover in `products.image_url`; the customer menu cycles through gallery photos and each dish opens a full detail view. Apply `202611180001_product_photo_galleries.sql` in Supabase SQL Editor before using the gallery editor. Never put a Cloudinary API secret in browser code.
 
 ## First Super Admin
 

@@ -9,6 +9,7 @@ const saveCart = cart => localStorage.setItem(cartKey, JSON.stringify(cart));
 const itemCount = cart => cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 const loading = button => setButtonLoading(button, 'Placing order');
 const restore = button => restoreButton(button);
+const photosOf = product => [...new Set([...(Array.isArray(product.image_urls) ? product.image_urls : []), ...(product.image_url ? [product.image_url] : [])])];
 
 function shell(title, subtitle, content, count = itemCount(readCart())) {
   return `<div class="customer-store"><header class="store-nav"><a class="brand" href="/customer/restaurants.html"><span class="brand-mark">${svgIcon('utensils-crossed')}</span>restora</a><nav><a href="/customer/restaurants.html">${svgIcon('store')} Restaurants</a><a class="store-cart-link" href="/customer/cart.html">${svgIcon('cart')} Cart <span>${count}</span></a></nav></header><main class="store-main"><div class="store-heading"><div><span class="eyebrow">Made for your appetite</span><h1>${title}</h1><p>${subtitle}</p></div></div>${content}</main><footer class="store-footer">A good meal is just around the corner.</footer></div>`;
@@ -34,7 +35,7 @@ export async function renderCustomerOrdering({ app, supabase, page, restaurantId
     if (!restaurantId) throw new Error('Choose a restaurant to view its menu.');
     const [{ data: restaurant, error: restaurantError }, { data: products, error: productsError }, { data: categories, error: categoryError }] = await Promise.all([
       supabase.from('restaurants').select('id,name,description,cuisine_type,cover_url').eq('id', restaurantId).eq('status', 'active').single(),
-      supabase.from('products').select('id,name,description,price,image_url,quantity,category_id,categories(name)').eq('restaurant_id', restaurantId).eq('available', true).gt('quantity', 0).order('name'),
+      supabase.from('products').select('id,name,description,price,image_url,image_urls,quantity,category_id,categories(name)').eq('restaurant_id', restaurantId).eq('available', true).gt('quantity', 0).order('name'),
       supabase.from('categories').select('id,name').eq('restaurant_id', restaurantId).order('name'),
     ]);
     if (restaurantError) throw restaurantError; if (productsError) throw productsError; if (categoryError) throw categoryError;
@@ -48,7 +49,16 @@ export async function renderCustomerOrdering({ app, supabase, page, restaurantId
       if (sort === 'price-low') filtered.sort((a, b) => Number(a.price) - Number(b.price));
       if (sort === 'price-high') filtered.sort((a, b) => Number(b.price) - Number(a.price));
       const grid = document.querySelector('#menu-products');
-      grid.innerHTML = filtered.length ? filtered.map(product => `<article class="dish-card">${product.image_url ? `<img class="dish-image" src="${esc(optimizeCloudinaryImage(product.image_url, 640))}" alt="${esc(product.name)}" loading="lazy">` : '<div class="dish-image dish-image-placeholder"><span>✦</span></div>'}<div class="dish-content"><span class="dish-category">${esc(product.categories?.name || restaurant.cuisine_type || 'From the kitchen')}</span><h2>${esc(product.name)}</h2><p>${esc(product.description || 'Prepared fresh for your order.')}</p><div class="dish-bottom"><div><b>${money(product.price)}</b><small>${product.quantity} available</small></div><button class="btn btn-primary" data-add="${esc(product.id)}">${cart.find(item => item.id === product.id)?.quantity ? `Add more · ${cart.find(item => item.id === product.id).quantity}` : 'Add to cart'}</button></div></div></article>`).join('') : '<div class="store-empty"><span>⌕</span><h2>No dishes match those filters</h2><p>Try another search or category.</p></div>';
+      grid.innerHTML = filtered.length ? filtered.map(product => {
+        const photos = photosOf(product), detailUrl = `/customer/dish.html?restaurant=${encodeURIComponent(restaurantId)}&product=${encodeURIComponent(product.id)}`;
+        return `<article class="dish-card"><a class="dish-open" href="${detailUrl}" aria-label="View ${esc(product.name)} details"><div class="dish-slideshow" data-slideshow>${photos.length ? photos.map((photo, index) => `<img class="dish-image dish-slide ${index === 0 ? 'is-active' : ''}" src="${esc(optimizeCloudinaryImage(photo, 640))}" alt="${esc(product.name)} · photo ${index + 1}" loading="lazy">`).join('') : '<div class="dish-image dish-image-placeholder"><span>✦</span></div>'}${photos.length > 1 ? `<span class="dish-photo-count">${photos.length} photos</span>` : ''}</div><div class="dish-content"><span class="dish-category">${esc(product.categories?.name || restaurant.cuisine_type || 'From the kitchen')}</span><h2>${esc(product.name)}</h2><p>${esc(product.description || 'Prepared fresh for your order.')}</p><span class="dish-details-link">View dish details <b>↗</b></span></div></a><div class="dish-bottom"><div><b>${money(product.price)}</b><small>${product.quantity} available</small></div><button class="btn btn-primary" data-add="${esc(product.id)}">${cart.find(item => item.id === product.id)?.quantity ? `Add more · ${cart.find(item => item.id === product.id).quantity}` : 'Add to cart'}</button></div></article>`;
+      }).join('') : '<div class="store-empty"><span>⌕</span><h2>No dishes match those filters</h2><p>Try another search or category.</p></div>';
+      clearInterval(grid.slideTimer);
+      const slideshows = [...grid.querySelectorAll('[data-slideshow]')].filter(el => el.querySelectorAll('.dish-slide').length > 1);
+      if (slideshows.length) grid.slideTimer = setInterval(() => slideshows.forEach(show => {
+        const slides = [...show.querySelectorAll('.dish-slide')], current = slides.findIndex(slide => slide.classList.contains('is-active'));
+        slides[current]?.classList.remove('is-active'); slides[(current + 1) % slides.length]?.classList.add('is-active');
+      }), 3600);
       grid.querySelectorAll('[data-add]').forEach(button => button.addEventListener('click', () => {
         const product = products.find(item => item.id === button.dataset.add);
         if (!product) return;
@@ -63,6 +73,34 @@ export async function renderCustomerOrdering({ app, supabase, page, restaurantId
     app.removeAttribute('aria-busy');
     document.querySelectorAll('#menu-search,#menu-category,#menu-sort').forEach(control => control.addEventListener(control.id === 'menu-search' ? 'input' : 'change', renderProducts));
     renderProducts();
+    return;
+  }
+
+  if (page === 'dish') {
+    const productId = new URLSearchParams(location.search).get('product');
+    if (!restaurantId || !productId) throw new Error('Choose a dish to view its details.');
+    const [{ data: restaurant, error: restaurantError }, { data: product, error: productError }] = await Promise.all([
+      supabase.from('restaurants').select('id,name,cuisine_type').eq('id', restaurantId).eq('status', 'active').single(),
+      supabase.from('products').select('id,name,description,price,image_url,image_urls,quantity,available,categories(name)').eq('id', productId).eq('restaurant_id', restaurantId).eq('available', true).single(),
+    ]);
+    if (restaurantError) throw restaurantError; if (productError) throw productError;
+    const photos = photosOf(product), cart = readCart();
+    app.innerHTML = shell('Meet your next favourite.', `A closer look at ${restaurant.name}.`, `<section class="dish-detail"><div class="dish-detail-gallery">${photos.length ? photos.map((photo, index) => `<img class="dish-detail-photo ${index === 0 ? 'is-active' : ''}" data-detail-slide src="${esc(optimizeCloudinaryImage(photo, 1000))}" alt="${esc(product.name)} · photo ${index + 1}" ${index ? 'hidden' : ''}>`).join('') : '<div class="dish-detail-placeholder">✦</div>'}${photos.length > 1 ? `<button class="dish-gallery-arrow previous" type="button" aria-label="Previous photo">‹</button><button class="dish-gallery-arrow next" type="button" aria-label="Next photo">›</button><div class="dish-gallery-dots">${photos.map((_, index) => `<button type="button" data-detail-dot="${index}" class="${index === 0 ? 'is-active' : ''}" aria-label="Show photo ${index + 1}"></button>`).join('')}</div>` : ''}</div><div class="dish-detail-copy"><a class="continue-shopping" href="/customer/menu.html?restaurant=${encodeURIComponent(restaurantId)}">${svgIcon('arrow-left')} Back to ${esc(restaurant.name)} menu</a><span class="dish-category">${esc(product.categories?.name || restaurant.cuisine_type || 'From the kitchen')}</span><h2>${esc(product.name)}</h2><b class="dish-detail-price">${money(product.price)}</b><p>${esc(product.description || 'Prepared fresh for your order.')}</p><div class="dish-detail-fresh">✦ Made fresh to order</div><button class="btn btn-primary" data-detail-add>${cart.find(item => item.id === product.id)?.quantity ? 'Add another to cart' : 'Add to cart'} · ${money(product.price)}</button></div></section>`);
+    const detailSlides = [...document.querySelectorAll('[data-detail-slide]')], dots = [...document.querySelectorAll('[data-detail-dot]')];
+    let activePhoto = 0;
+    const showPhoto = index => { if (!detailSlides.length) return; activePhoto = (index + detailSlides.length) % detailSlides.length; detailSlides.forEach((slide, i) => { slide.hidden = i !== activePhoto; slide.classList.toggle('is-active', i === activePhoto); }); dots.forEach((dot, i) => dot.classList.toggle('is-active', i === activePhoto)); };
+    document.querySelector('.dish-gallery-arrow.previous')?.addEventListener('click', () => showPhoto(activePhoto - 1));
+    document.querySelector('.dish-gallery-arrow.next')?.addEventListener('click', () => showPhoto(activePhoto + 1));
+    dots.forEach((dot, index) => dot.addEventListener('click', () => showPhoto(index)));
+    document.querySelector('[data-detail-add]')?.addEventListener('click', event => {
+      let currentCart = readCart();
+      if (currentCart.some(item => item.restaurant_id !== restaurantId)) { if (!confirm('Your cart has dishes from another restaurant. Clear it and add this dish?')) return; currentCart = []; }
+      const existing = currentCart.find(item => item.id === product.id);
+      if ((existing?.quantity || 0) >= product.quantity) { toast('That is all the available stock for this dish.'); return; }
+      if (existing) existing.quantity++; else currentCart.push({ id: product.id, restaurant_id: restaurantId, quantity: 1 });
+      saveCart(currentCart); event.currentTarget.textContent = 'Added · add another'; toast('Added to your cart.');
+    });
+    app.removeAttribute('aria-busy');
     return;
   }
 

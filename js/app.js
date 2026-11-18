@@ -389,36 +389,43 @@ async function entityForm(entity, title, restaurantId, record = null) {
     const displayValue = type === 'datetime-local' && value ? new Date(new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : value ?? '';
     return `<label for="entity-${key}">${esc(label)}</label><input id="entity-${key}" name="${key}" type="${type}" value="${esc(displayValue)}" ${required ? 'required' : ''} ${Object.entries(attrs).map(([name, attrValue]) => `${name}="${esc(attrValue)}"`).join(' ')}>`;
   };
-  const currentImage = record?.image_url || '';
-  dialog.innerHTML = `<form id="entity-form"><div><span class="eyebrow">${esc(title)}</span><h2>${editing ? 'Edit' : 'Add'} ${noun}</h2><p class="inventory-help">${editing ? 'Update the details and save your changes.' : 'Enter the details below.'}</p></div>${fields.map(inputMarkup).join('')}${entity === 'products' ? `<label for="product-image-file">Product image (optional)</label><input id="product-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/avif"><input type="hidden" name="image_url" value="${esc(currentImage)}"><div id="product-image-preview" class="product-image-preview">${currentImage ? `<img src="${esc(optimizeCloudinaryImage(currentImage, 320))}" alt="Product image preview">` : ''}</div><small id="product-image-status" class="upload-status">${currentImage ? 'Current image saved. Choose a new image to replace it.' : 'JPG, PNG, WebP, or AVIF · up to 8 MB'}</small>` : ''}<div id="entity-error" role="alert"></div><div class="inventory-actions"><button type="button" class="btn btn-ghost" data-cancel>Cancel</button><button class="btn btn-primary" type="submit">${editing ? 'Save changes' : 'Add'}</button></div></form>`;
+  let productImages = entity === 'products' ? [...new Set([...(record?.image_urls || []), ...(record?.image_url ? [record.image_url] : [])])] : [];
+  const renderProductImages = () => {
+    const preview = dialog.querySelector('#product-image-preview');
+    if (!preview) return;
+    preview.innerHTML = productImages.map((url, index) => `<div class="product-image-preview-item"><img src="${esc(optimizeCloudinaryImage(url, 240))}" alt="Dish photo ${index + 1}"><button type="button" class="product-image-remove" data-remove-product-image="${index}" aria-label="Remove photo ${index + 1}">×</button><small>${index === 0 ? 'Cover photo' : `Photo ${index + 1}`}</small></div>`).join('') || '<span class="product-image-empty">Dish photos will appear here</span>';
+    dialog.querySelectorAll('[data-remove-product-image]').forEach(button => button.addEventListener('click', () => { productImages.splice(Number(button.dataset.removeProductImage), 1); renderProductImages(); }));
+  };
+  const currentImage = productImages[0] || '';
+  dialog.innerHTML = `<form id="entity-form"><div><span class="eyebrow">${esc(title)}</span><h2>${editing ? 'Edit' : 'Add'} ${noun}</h2><p class="inventory-help">${editing ? 'Update the details and save your changes.' : 'Enter the details below.'}</p></div>${fields.map(inputMarkup).join('')}${entity === 'products' ? `<label for="product-image-file">Dish photos</label><input id="product-image-file" type="file" accept="image/jpeg,image/png,image/webp,image/avif" multiple><input type="hidden" name="image_urls" value="${esc(JSON.stringify(productImages))}"><input type="hidden" name="image_url" value="${esc(currentImage)}"><div id="product-image-preview" class="product-image-preview"></div><small id="product-image-status" class="upload-status">Add multiple photos; customers will see them rotate in the menu. First photo is the cover.</small>` : ''}<div id="entity-error" role="alert"></div><div class="inventory-actions"><button type="button" class="btn btn-ghost" data-cancel>Cancel</button><button class="btn btn-primary" type="submit">${editing ? 'Save changes' : 'Add'}</button></div></form>`;
   document.body.append(dialog);
   dialog.addEventListener('close', () => dialog.remove(), { once: true });
   dialog.querySelector('[data-cancel]').addEventListener('click', () => dialog.close());
   dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
   let imageUploading = false;
+  renderProductImages();
   dialog.querySelector('#product-image-file')?.addEventListener('change', async event => {
-    const file = event.currentTarget.files?.[0];
-    if (!file) return;
-    const status = dialog.querySelector('#product-image-status'), preview = dialog.querySelector('#product-image-preview'), errorBox = dialog.querySelector('#entity-error');
+    const files = [...(event.currentTarget.files || [])];
+    if (!files.length) return;
+    const status = dialog.querySelector('#product-image-status'), errorBox = dialog.querySelector('#entity-error');
     const button = dialog.querySelector('[type="submit"]');
-    imageUploading = true; setButtonLoading(button, 'Uploading image'); errorBox.textContent = ''; status.innerHTML = loadingMarkup('Uploading image');
+    imageUploading = true; setButtonLoading(button, 'Uploading photos'); errorBox.textContent = ''; status.innerHTML = loadingMarkup(`Uploading ${files.length} photo${files.length === 1 ? '' : 's'}`);
     try {
-      const url = await uploadProductImage(file);
-      dialog.querySelector('[name="image_url"]').value = url;
-      preview.innerHTML = `<img src="${esc(optimizeCloudinaryImage(url, 320))}" alt="Product image preview">`;
-      status.textContent = 'Image uploaded to Cloudinary.';
+      const urls = await Promise.all(files.map(uploadProductImage));
+      productImages.push(...urls);
+      renderProductImages();
+      status.textContent = `${productImages.length} photo${productImages.length === 1 ? '' : 's'} ready. Customers will see a slideshow.`;
     } catch (error) {
-      event.currentTarget.value = '';
       errorBox.innerHTML = `<div class="error">${esc(error.message)}</div>`;
-      status.textContent = 'Choose an image to upload.';
-    } finally { imageUploading = false; restoreButton(button, editing ? 'Save changes' : 'Add'); }
+      status.textContent = 'Some photos could not be uploaded. Please retry.';
+    } finally { event.currentTarget.value = ''; imageUploading = false; restoreButton(button, editing ? 'Save changes' : 'Add'); }
   });
   dialog.querySelector('#entity-form').addEventListener('submit', async event => {
     event.preventDefault();
     const form = event.currentTarget, button = form.querySelector('[type="submit"]'), errorBox = form.querySelector('#entity-error'), formData = new FormData(form), values = {};
     if (imageUploading) return;
     for (const [key, , type] of fields) values[key] = type === 'checkbox' ? form.elements[key].checked : type === 'number' ? Number(formData.get(key)) : type === 'datetime-local' && formData.get(key) ? new Date(formData.get(key)).toISOString() : formData.get(key) || null;
-    if (entity === 'products') { values.image_url = formData.get('image_url') || null; if (!values.category_id) values.category_id = null; }
+    if (entity === 'products') { values.image_urls = productImages; values.image_url = productImages[0] || null; if (!values.category_id) values.category_id = null; }
     if (!editing) values.restaurant_id = restaurantId;
     setButtonLoading(button, 'Saving changes'); errorBox.textContent = '';
     try {
@@ -552,7 +559,7 @@ const tableParams = new URLSearchParams(location.search), tableRoute = { restaur
 if(path==='/menu.html')renderPublicTableMenu({app,supabase,...tableRoute}).catch(renderLoadError);
 else if(path==='/table-cart.html')renderPublicTableCart({app,supabase,...tableRoute}).catch(renderLoadError);
 else if(path==='/table-checkout.html')renderPublicTableCheckout({app,supabase,...tableRoute,toast}).catch(renderLoadError);
-else if(['/customer/restaurants.html','/customer/menu.html','/customer/cart.html','/customer/checkout.html'].includes(path))renderCustomerOrdering({app,supabase,page:path.split('/').pop().replace('.html',''),restaurantId:tableParams.get('restaurant'),toast}).catch(renderLoadError);
+else if(['/customer/restaurants.html','/customer/menu.html','/customer/dish.html','/customer/cart.html','/customer/checkout.html'].includes(path))renderCustomerOrdering({app,supabase,page:path.split('/').pop().replace('.html',''),restaurantId:tableParams.get('restaurant'),toast}).catch(renderLoadError);
 else if(path==='/'||path==='/index.html')landing();
 else if(path==='/kitchen/login.html')location.replace('/login.html');
 else if(['/login.html','/register.html','/forgot-password.html'].includes(path)){const kind=path.replace('/','').replace('.html','');authPage(kind);if(configured&&kind==='login'&&!location.search)getContext().then(c=>{if(c)routeAfterLogin()}).catch(()=>{});}
