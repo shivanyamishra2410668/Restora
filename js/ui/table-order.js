@@ -44,6 +44,8 @@ export async function showTableQr({ supabase, restaurantId, tableId }) {
 const tableCartKey = (restaurantId, tableId) => `restora_table_cart:${restaurantId}:${tableId}`;
 const tableOrderIdsKey = (restaurantId, tableId) => `restora_table_orders:${restaurantId}:${tableId}`;
 const tableCartUrl = (page, restaurantId, tableId) => `/${page}.html?restaurant=${encodeURIComponent(restaurantId)}&table=${encodeURIComponent(tableId)}`;
+const productPhotos = product => [...new Set([...(Array.isArray(product.image_urls) ? product.image_urls : []), ...(product.image_url ? [product.image_url] : [])])];
+let tablePhotoSlideTimer = null;
 let tableStatusPollTimer = null;
 function stopTableStatusPolling() { if (tableStatusPollTimer) clearInterval(tableStatusPollTimer); tableStatusPollTimer = null; }
 function readTrackedOrderIds(restaurantId, tableId) {
@@ -110,10 +112,15 @@ export async function renderPublicTableMenu({ app, supabase, restaurantId, table
   stopTableStatusPolling();
   showTablePageLoader(app, 'Loading the table menu');
   const tableInfo = await getPublicTableContext({ app, supabase, restaurantId, tableId });
-  const cacheKey = `public-menu:${restaurantId}:${tableId}`;
+  const cacheKey = `public-menu-v2:${restaurantId}:${tableId}`;
   let menuData = readPageCache(cacheKey, 30_000);
   if (!menuData) {
-    const { data: products, error } = await supabase.from('products').select('id,name,description,price,image_url,quantity,category_id,categories(name)').eq('restaurant_id', restaurantId).eq('available', true).gt('quantity', 0).order('name');
+    let result = await supabase.from('products').select('id,name,description,price,image_url,image_urls,quantity,category_id,categories(name)').eq('restaurant_id', restaurantId).eq('available', true).gt('quantity', 0).order('name');
+    if (result.error && /image_urls/i.test(result.error.message || '')) {
+      result = await supabase.from('products').select('id,name,description,price,image_url,quantity,category_id,categories(name)').eq('restaurant_id', restaurantId).eq('available', true).gt('quantity', 0).order('name');
+      if (!result.error) result.data = (result.data || []).map(product => ({ ...product, image_urls: product.image_url ? [product.image_url] : [] }));
+    }
+    const { data: products, error } = result;
     if (error) throw error;
     menuData = { products: products || [] };
     writePageCache(cacheKey, menuData);
@@ -123,10 +130,51 @@ export async function renderPublicTableMenu({ app, supabase, restaurantId, table
   let justPlacedOrder = sessionStorage.getItem(`restora_just_ordered:${restaurantId}:${tableId}`);
   if (justPlacedOrder) sessionStorage.removeItem(`restora_just_ordered:${restaurantId}:${tableId}`);
   let cart = readTableCart(restaurantId, tableId);
+  const startSlideshow = () => {
+    clearInterval(tablePhotoSlideTimer);
+    const carousels = [...app.querySelectorAll('[data-table-photo-slideshow]')].filter(gallery => gallery.querySelectorAll('[data-table-photo]').length > 1);
+    if (!carousels.length || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    tablePhotoSlideTimer = setInterval(() => carousels.forEach(gallery => {
+      const slides = [...gallery.querySelectorAll('[data-table-photo]')];
+      const active = slides.findIndex(slide => slide.classList.contains('is-active'));
+      slides[active]?.classList.remove('is-active');
+      slides[(active + 1) % slides.length]?.classList.add('is-active');
+    }), 3200);
+  };
+  const productId = new URLSearchParams(location.search).get('product');
+  const renderDetail = () => {
+    const product = products.find(item => item.id === productId);
+    if (!product) throw new Error('This dish is no longer available. Go back to the table menu and choose another dish.');
+    const photos = productPhotos(product), qty = cart.find(item => item.id === product.id)?.quantity || 0;
+    const gallery = photos.length
+      ? `<div class="table-dish-gallery" data-table-photo-slideshow>${photos.map((photo, index) => `<img class="table-dish-photo ${index === 0 ? 'is-active' : ''}" data-table-photo src="${esc(optimizeCloudinaryImage(photo, 1000))}" alt="${esc(product.name)} photo ${index + 1}" ${index ? 'hidden' : ''} loading="lazy">`).join('')}${photos.length > 1 ? `<button class="table-dish-arrow previous" data-photo-step="-1" aria-label="Previous photo">‹</button><button class="table-dish-arrow next" data-photo-step="1" aria-label="Next photo">›</button><div class="table-dish-dots">${photos.map((_, index) => `<button data-photo-index="${index}" class="${index === 0 ? 'is-active' : ''}" aria-label="Show photo ${index + 1}"></button>`).join('')}</div>` : ''}</div>`
+      : '<div class="table-dish-gallery table-dish-placeholder">✦</div>';
+    app.innerHTML = tablePageShell(tableInfo, restaurantId, tableId, `<section class="table-dish-detail"><a class="table-dish-back" href="${tableCartUrl('menu', restaurantId, tableId)}">← Back to the table menu</a><div class="table-dish-detail-layout">${gallery}<div class="table-dish-copy"><span class="menu-product-category">${esc(product.categories?.name || 'Menu')}</span><h1>${esc(product.name)}</h1><b class="table-dish-price">${money(product.price)}</b><p>${esc(product.description || 'Prepared fresh for your table.')}</p><span class="table-dish-fresh">✦ Prepared fresh for your table</span><button class="btn btn-primary" data-detail-add ${qty >= product.quantity ? 'disabled' : ''}>${qty ? `Add another · ${qty} in cart` : 'Add to cart'} · ${money(product.price)}</button></div></div></section>`);
+    const slides = [...app.querySelectorAll('[data-table-photo]')], dots = [...app.querySelectorAll('[data-photo-index]')];
+    let activePhoto = 0;
+    const showPhoto = index => {
+      if (!slides.length) return;
+      activePhoto = (index + slides.length) % slides.length;
+      slides.forEach((slide, i) => { slide.hidden = i !== activePhoto; slide.classList.toggle('is-active', i === activePhoto); });
+      dots.forEach((dot, i) => dot.classList.toggle('is-active', i === activePhoto));
+    };
+    app.querySelectorAll('[data-photo-step]').forEach(button => button.addEventListener('click', () => showPhoto(activePhoto + Number(button.dataset.photoStep))));
+    dots.forEach((dot, index) => dot.addEventListener('click', () => showPhoto(index)));
+    app.querySelector('[data-detail-add]')?.addEventListener('click', () => {
+      const existing = cart.find(item => item.id === product.id);
+      if ((existing?.quantity || 0) >= product.quantity) return;
+      if (existing) existing.quantity += 1; else cart.push({ id: product.id, quantity: 1 });
+      saveTableCart(restaurantId, tableId, cart);
+      renderDetail();
+    });
+    startSlideshow();
+  };
   const render = () => {
     const selected = cart.map(item => ({ ...item, product: products.find(product => product.id === item.id) })).filter(item => item.product);
     const count = tableCartCount(cart);
-    app.innerHTML = tablePageShell(tableInfo, restaurantId, tableId, `<div id="table-order-notice">${justPlacedOrder ? '<div class="table-order-placed-banner">✓ Your order was sent to the restaurant. Track its progress below.</div>' : ''}</div><section class="public-menu-intro"><span class="eyebrow">Fresh from the kitchen · Table ${esc(tableInfo.table_number)}</span><h1>${esc(tableInfo.restaurant_name)}</h1><p>${esc(tableInfo.description || 'Choose your favorites, review your cart, then send your order straight to the kitchen.')}</p></section><div id="guest-order-tracking">${renderTrackedTableOrders(trackedOrders)}</div><section class="table-menu-toolbar"><div><b>${products.length} dishes ready to order</b><span>Prices shown are the restaurant’s current menu prices.</span></div><a class="btn btn-primary" href="${tableCartUrl('table-cart', restaurantId, tableId)}">Open cart ${count ? `· ${count}` : ''} →</a></section>${products.length ? `<section class="menu-product-grid">${products.map(product => { const qty = cart.find(item => item.id === product.id)?.quantity || 0; return `<article class="menu-product-card">${product.image_url ? `<img class="menu-product-image" src="${esc(optimizeCloudinaryImage(product.image_url, 640))}" alt="${esc(product.name)}" loading="lazy">` : '<div class="menu-product-image menu-product-placeholder">✦</div>'}<div class="menu-product-category">${esc(product.categories?.name || 'Menu')}</div><h2>${esc(product.name)}</h2><p>${esc(product.description || 'Prepared fresh for your table.')}</p><footer><b>${money(product.price)}</b><button class="btn btn-primary" data-add-product="${esc(product.id)}" ${qty >= product.quantity ? 'disabled' : ''}>${qty ? `Add more · ${qty}` : 'Add to cart'}</button></footer><small>${product.quantity} available</small></article>`; }).join('')}</section>` : '<section class="panel empty">The restaurant has no available menu items right now.</section>'}${selected.length ? `<a class="table-cart-fab" href="${tableCartUrl('table-cart', restaurantId, tableId)}"><span><b>${count} item${count === 1 ? '' : 's'} in your cart</b><small>Review your order before sending it</small></span><strong>View cart →</strong></a>` : ''}`);
+    if (productId) { renderDetail(); return; }
+    clearInterval(tablePhotoSlideTimer);
+    app.innerHTML = tablePageShell(tableInfo, restaurantId, tableId, `<div id="table-order-notice">${justPlacedOrder ? '<div class="table-order-placed-banner">✓ Your order was sent to the restaurant. Track its progress below.</div>' : ''}</div><section class="public-menu-intro"><span class="eyebrow">Fresh from the kitchen · Table ${esc(tableInfo.table_number)}</span><h1>${esc(tableInfo.restaurant_name)}</h1><p>${esc(tableInfo.description || 'Choose your favorites, review your cart, then send your order straight to the kitchen.')}</p></section><div id="guest-order-tracking">${renderTrackedTableOrders(trackedOrders)}</div><section class="table-menu-toolbar"><div><b>${products.length} dishes ready to order</b><span>Prices shown are the restaurant’s current menu prices.</span></div><a class="btn btn-primary" href="${tableCartUrl('table-cart', restaurantId, tableId)}">Open cart ${count ? `· ${count}` : ''} →</a></section>${products.length ? `<section class="menu-product-grid">${products.map(product => { const qty = cart.find(item => item.id === product.id)?.quantity || 0, photos = productPhotos(product), detailUrl = `${tableCartUrl('menu', restaurantId, tableId)}&product=${encodeURIComponent(product.id)}`; return `<article class="menu-product-card"><a class="table-dish-link" href="${detailUrl}" aria-label="View ${esc(product.name)} details"><div class="table-photo-gallery" data-table-photo-slideshow>${photos.length ? photos.map((photo, index) => `<img class="menu-product-image table-menu-slide ${index === 0 ? 'is-active' : ''}" data-table-photo src="${esc(optimizeCloudinaryImage(photo, 640))}" alt="${esc(product.name)} photo ${index + 1}" loading="lazy">`).join('') : '<div class="menu-product-image menu-product-placeholder">✦</div>'}${photos.length > 1 ? `<span class="table-photo-count">${photos.length} photos</span>` : ''}</div><div class="menu-product-category">${esc(product.categories?.name || 'Menu')}</div><h2>${esc(product.name)}</h2><p>${esc(product.description || 'Prepared fresh for your table.')}</p><span class="table-dish-open-label">View dish details ↗</span></a><footer><b>${money(product.price)}</b><button class="btn btn-primary" data-add-product="${esc(product.id)}" ${qty >= product.quantity ? 'disabled' : ''}>${qty ? `Add more · ${qty}` : 'Add to cart'}</button></footer><small>${product.quantity} available</small></article>`; }).join('')}</section>` : '<section class="panel empty">The restaurant has no available menu items right now.</section>'}${selected.length ? `<a class="table-cart-fab" href="${tableCartUrl('table-cart', restaurantId, tableId)}"><span><b>${count} item${count === 1 ? '' : 's'} in your cart</b><small>Review your order before sending it</small></span><strong>View cart →</strong></a>` : ''}`);
     app.querySelectorAll('[data-add-product]').forEach(button => button.addEventListener('click', () => {
       const product = products.find(item => item.id === button.dataset.addProduct);
       if (!product) return;
@@ -136,8 +184,9 @@ export async function renderPublicTableMenu({ app, supabase, restaurantId, table
       saveTableCart(restaurantId, tableId, cart);
       render();
     }));
+    startSlideshow();
   };
-  render();
+  if (productId) renderDetail(); else render();
   app.removeAttribute('aria-busy');
   if (readTrackedOrderIds(restaurantId, tableId).length) {
     tableStatusPollTimer = setInterval(async () => {
