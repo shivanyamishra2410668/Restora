@@ -10,6 +10,17 @@ const itemCount = cart => cart.reduce((sum, item) => sum + Number(item.quantity 
 const loading = button => setButtonLoading(button, 'Placing order');
 const restore = button => restoreButton(button);
 const photosOf = product => [...new Set([...(Array.isArray(product.image_urls) ? product.image_urls : []), ...(product.image_url ? [product.image_url] : [])])];
+const needsGalleryMigration = error => Boolean(error && /image_urls/i.test(error.message || '') && (['42703', 'PGRST204', 'PGRST200'].includes(error.code) || /(column|schema cache|field)/i.test(error.message || '')));
+async function loadProductsWithGallery(query) {
+  let result = await query(true);
+  if (!needsGalleryMigration(result.error)) return result;
+  result = await query(false);
+  if (!result.error && result.data) {
+    const withFallback = product => ({ ...product, image_urls: product.image_url ? [product.image_url] : [] });
+    result.data = Array.isArray(result.data) ? result.data.map(withFallback) : withFallback(result.data);
+  }
+  return result;
+}
 
 function shell(title, subtitle, content, count = itemCount(readCart())) {
   return `<div class="customer-store"><header class="store-nav"><a class="brand" href="/customer/restaurants.html"><span class="brand-mark">${svgIcon('utensils-crossed')}</span>restora</a><nav><a href="/customer/restaurants.html">${svgIcon('store')} Restaurants</a><a class="store-cart-link" href="/customer/cart.html">${svgIcon('cart')} Cart <span>${count}</span></a></nav></header><main class="store-main"><div class="store-heading"><div><span class="eyebrow">Made for your appetite</span><h1>${title}</h1><p>${subtitle}</p></div></div>${content}</main><footer class="store-footer">A good meal is just around the corner.</footer></div>`;
@@ -31,11 +42,11 @@ export async function renderCustomerOrdering({ app, supabase, page, restaurantId
     return;
   }
 
-  if (page === 'menu') {
+  if (page === 'menu' && !new URLSearchParams(location.search).has('product')) {
     if (!restaurantId) throw new Error('Choose a restaurant to view its menu.');
     const [{ data: restaurant, error: restaurantError }, { data: products, error: productsError }, { data: categories, error: categoryError }] = await Promise.all([
       supabase.from('restaurants').select('id,name,description,cuisine_type,cover_url').eq('id', restaurantId).eq('status', 'active').single(),
-      supabase.from('products').select('id,name,description,price,image_url,image_urls,quantity,category_id,categories(name)').eq('restaurant_id', restaurantId).eq('available', true).gt('quantity', 0).order('name'),
+      loadProductsWithGallery(includeGallery => supabase.from('products').select(`id,name,description,price,image_url${includeGallery ? ',image_urls' : ''},quantity,category_id,categories(name)`).eq('restaurant_id', restaurantId).eq('available', true).gt('quantity', 0).order('name')),
       supabase.from('categories').select('id,name').eq('restaurant_id', restaurantId).order('name'),
     ]);
     if (restaurantError) throw restaurantError; if (productsError) throw productsError; if (categoryError) throw categoryError;
@@ -50,7 +61,7 @@ export async function renderCustomerOrdering({ app, supabase, page, restaurantId
       if (sort === 'price-high') filtered.sort((a, b) => Number(b.price) - Number(a.price));
       const grid = document.querySelector('#menu-products');
       grid.innerHTML = filtered.length ? filtered.map(product => {
-        const photos = photosOf(product), detailUrl = `/customer/dish.html?restaurant=${encodeURIComponent(restaurantId)}&product=${encodeURIComponent(product.id)}`;
+        const photos = photosOf(product), detailUrl = `/customer/menu.html?restaurant=${encodeURIComponent(restaurantId)}&product=${encodeURIComponent(product.id)}`;
         return `<article class="dish-card"><a class="dish-open" href="${detailUrl}" aria-label="View ${esc(product.name)} details"><div class="dish-slideshow" data-slideshow>${photos.length ? photos.map((photo, index) => `<img class="dish-image dish-slide ${index === 0 ? 'is-active' : ''}" src="${esc(optimizeCloudinaryImage(photo, 640))}" alt="${esc(product.name)} · photo ${index + 1}" loading="lazy">`).join('') : '<div class="dish-image dish-image-placeholder"><span>✦</span></div>'}${photos.length > 1 ? `<span class="dish-photo-count">${photos.length} photos</span>` : ''}</div><div class="dish-content"><span class="dish-category">${esc(product.categories?.name || restaurant.cuisine_type || 'From the kitchen')}</span><h2>${esc(product.name)}</h2><p>${esc(product.description || 'Prepared fresh for your order.')}</p><span class="dish-details-link">View dish details <b>↗</b></span></div></a><div class="dish-bottom"><div><b>${money(product.price)}</b><small>${product.quantity} available</small></div><button class="btn btn-primary" data-add="${esc(product.id)}">${cart.find(item => item.id === product.id)?.quantity ? `Add more · ${cart.find(item => item.id === product.id).quantity}` : 'Add to cart'}</button></div></article>`;
       }).join('') : '<div class="store-empty"><span>⌕</span><h2>No dishes match those filters</h2><p>Try another search or category.</p></div>';
       clearInterval(grid.slideTimer);
@@ -76,12 +87,12 @@ export async function renderCustomerOrdering({ app, supabase, page, restaurantId
     return;
   }
 
-  if (page === 'dish') {
+  if (page === 'dish' || (page === 'menu' && new URLSearchParams(location.search).has('product'))) {
     const productId = new URLSearchParams(location.search).get('product');
     if (!restaurantId || !productId) throw new Error('Choose a dish to view its details.');
     const [{ data: restaurant, error: restaurantError }, { data: product, error: productError }] = await Promise.all([
       supabase.from('restaurants').select('id,name,cuisine_type').eq('id', restaurantId).eq('status', 'active').single(),
-      supabase.from('products').select('id,name,description,price,image_url,image_urls,quantity,available,categories(name)').eq('id', productId).eq('restaurant_id', restaurantId).eq('available', true).single(),
+      loadProductsWithGallery(includeGallery => supabase.from('products').select(`id,name,description,price,image_url${includeGallery ? ',image_urls' : ''},quantity,available,categories(name)`).eq('id', productId).eq('restaurant_id', restaurantId).eq('available', true).single()),
     ]);
     if (restaurantError) throw restaurantError; if (productError) throw productError;
     const photos = photosOf(product), cart = readCart();

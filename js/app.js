@@ -405,7 +405,8 @@ async function entityForm(entity, title, restaurantId, record = null) {
   let imageUploading = false;
   renderProductImages();
   dialog.querySelector('#product-image-file')?.addEventListener('change', async event => {
-    const files = [...(event.currentTarget.files || [])];
+    const fileInput = event.currentTarget;
+    const files = [...(fileInput.files || [])];
     if (!files.length) return;
     const status = dialog.querySelector('#product-image-status'), errorBox = dialog.querySelector('#entity-error');
     const button = dialog.querySelector('[type="submit"]');
@@ -418,7 +419,7 @@ async function entityForm(entity, title, restaurantId, record = null) {
     } catch (error) {
       errorBox.innerHTML = `<div class="error">${esc(error.message)}</div>`;
       status.textContent = 'Some photos could not be uploaded. Please retry.';
-    } finally { event.currentTarget.value = ''; imageUploading = false; restoreButton(button, editing ? 'Save changes' : 'Add'); }
+    } finally { fileInput.value = ''; imageUploading = false; restoreButton(button, editing ? 'Save changes' : 'Add'); }
   });
   dialog.querySelector('#entity-form').addEventListener('submit', async event => {
     event.preventDefault();
@@ -431,7 +432,12 @@ async function entityForm(entity, title, restaurantId, record = null) {
     try {
       if (editing) await update(entity, record.id, values); else await insert(entity, values);
       dialog.close(); toast(`${noun[0].toUpperCase()}${noun.slice(1)} ${editing ? 'updated' : 'added'}.`); dashboard();
-    } catch (error) { errorBox.innerHTML = `<div class="error">${esc(error.message)}</div>`; restoreButton(button, editing ? 'Save changes' : 'Add'); }
+    } catch (error) {
+      const message = entity === 'products' && /image_urls/i.test(error.message || '') && /(column|schema cache|field)/i.test(error.message || '')
+        ? 'Photo uploads finished, but the gallery database column is missing. Run supabase/migrations/202611180001_product_photo_galleries.sql in the Supabase SQL Editor, then save again.'
+        : error.message;
+      errorBox.innerHTML = `<div class="error">${esc(message)}</div>`; restoreButton(button, editing ? 'Save changes' : 'Add');
+    }
   });
   dialog.showModal();
 }
