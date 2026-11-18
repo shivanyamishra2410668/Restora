@@ -6,7 +6,7 @@ export function renderStaffPanel(members, viewerRole) {
   return `<section class="panel"><div class="panel-head"><h3>Restaurant staff</h3><span>${members.length} team members</span></div>
     <p class="section-intro">Add a staff member using the email on their Restora account. If they are new, ask them to register first.</p>
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-      ${members.map(member => `<tr><td>${esc(member.full_name || 'Staff member')}</td><td>${member.email ? esc(member.email) : '—'}</td><td>${esc(member.role.replaceAll('_', ' '))}</td><td><span class="badge ${member.active ? 'active' : 'rejected'}">${member.active ? 'Active' : 'Inactive'}</span></td><td>${member.role === 'restaurant_owner' || (viewerRole !== 'restaurant_owner' && member.role === 'manager') || !member.email ? '—' : `<button class="btn btn-ghost" data-action="edit-staff" data-id="${esc(member.user_id)}">Edit role</button>`}</td></tr>`).join('')}
+      ${members.map(member => `<tr><td>${esc(member.full_name || 'Staff member')}</td><td>${member.email ? esc(member.email) : '-'}</td><td>${esc(member.role.replaceAll('_', ' '))}</td><td><span class="badge ${member.active ? 'active' : 'rejected'}">${member.active ? 'Active' : 'Inactive'}</span></td><td>${member.role === 'restaurant_owner' || (viewerRole !== 'restaurant_owner' && member.role === 'manager') || !member.email ? '-' : `<button class="btn btn-ghost" data-action="edit-staff" data-id="${esc(member.user_id)}">Edit role</button>`}</td></tr>`).join('')}
     </tbody></table>${members.length ? '' : '<div class="empty">No staff members found for this restaurant yet.</div>'}</div>
   </section>`;
 }
