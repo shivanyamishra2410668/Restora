@@ -112,8 +112,8 @@ async function dashboard() {
   const links = navByRole[role] || navByRole.customer;
   const entity = role === 'super_admin' && title === 'Restaurants' ? 'restaurant_applications' : title === 'Menu' ? 'products' : entityFor(title);
   const subtitle = role === 'super_admin' ? 'Restaurant onboarding' : membership?.restaurants?.name || 'Restaurant workspace';
-  const cacheKey = `${c.user.id}:${restaurantId || 'platform'}:${path}${title === 'My orders' ? ':tracking-v2-order-number' : ['Orders', 'Kitchen queue', 'Order history'].includes(title) ? ':order-number-v1' : ''}`;
-  const ttl = ['Orders', 'Kitchen queue', 'Order history', 'Employees'].includes(title) ? 5_000 : 30_000;
+  const cacheKey = `${c.user.id}:${restaurantId || 'platform'}:${path}${title === 'Overview' && role !== 'super_admin' ? ':recent-orders-v1' : title === 'My orders' ? ':tracking-v2-order-number' : ['Orders', 'Kitchen queue', 'Order history'].includes(title) ? ':order-number-v1' : ''}`;
+  const ttl = ['Overview', 'Orders', 'Kitchen queue', 'Order history', 'Employees'].includes(title) ? 5_000 : 30_000;
   const cached = readPageCache(cacheKey, ttl);
   const createFrame = !app.querySelector('#dashboard-data') || app.dataset.dashboardFrame !== cacheKey;
   const loadingContent = renderDynamicSkeleton({ title, showStats: title === 'Overview' });
@@ -133,7 +133,7 @@ async function dashboard() {
       : role === 'kitchen_staff' && ['Kitchen queue', 'Order history'].includes(title) ? renderKitchenPanel(list, title === 'Order history', kitchenFilterState)
       : role === 'customer' && title === 'My orders' ? renderCustomerOrdersPanel(list)
       : title === 'Settings' ? restaurantSettingsPanel(list[0])
-      : title === 'Overview' ? overviewPanels(role, stats)
+      : title === 'Overview' ? overviewPanels(role, stats, list)
       : entity ? tablePanel(title, list, role, restaurantId)
       : `<section class="panel"><div class="empty">${title === 'Kitchen queue' ? 'Kitchen tickets will appear here as soon as customers place orders.' : 'This view is ready for your workspace data.'}</div></section>`;
     renderDashboardData({ app, statsHtml, errorHtml, contentHtml });
@@ -176,6 +176,11 @@ async function dashboard() {
       if (role === 'kitchen_staff' && ['Kitchen queue', 'Order history'].includes(title)) {
         const statuses = title === 'Kitchen queue' ? ['confirmed', 'preparing'] : ['ready', 'completed'];
         const { data, error } = await supabase.from('orders').select('*,restaurant_tables(table_number),order_items(*)').eq('restaurant_id', restaurantId).in('status', statuses).order('created_at', { ascending: title === 'Kitchen queue' });
+        if (error) throw error;
+        return { list: data || [] };
+      }
+      if (title === 'Overview' && restaurantId && ['restaurant_owner', 'manager'].includes(role)) {
+        const { data, error } = await supabase.from('orders').select('id,order_number,guest_name,order_type,status,total,created_at,restaurant_tables(table_number)').eq('restaurant_id', restaurantId).order('created_at', { ascending: false }).limit(8);
         if (error) throw error;
         return { list: data || [] };
       }
@@ -285,7 +290,7 @@ function subscribeToDashboardOrders({ role, title, restaurantId, userId }) {
     return;
   }
   if (!restaurantId) return;
-  if (role !== 'kitchen_staff' && title !== 'Orders') return;
+  if (role !== 'kitchen_staff' && title !== 'Orders' && !(title === 'Overview' && ['restaurant_owner', 'manager'].includes(role))) return;
   activeDashboardChannel = supabase.channel(`dashboard-orders-${restaurantId}-${role}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `restaurant_id=eq.${restaurantId}` }, () => {
       invalidatePageCache();
@@ -294,7 +299,15 @@ function subscribeToDashboardOrders({ role, title, restaurantId, userId }) {
 }
 
 
-function overviewPanels(role,stats){if(role==='super_admin')return `<section class="panel"><div class="panel-head"><h3>Restaurant applications</h3><a href="/super-admin/restaurants.html">Review requests -></a></div><p class="section-intro">Approve an application to activate the restaurant and grant its owner access to the management workspace. Rejected applications stay inactive.</p><div class="toolbar"><a class="btn btn-primary" href="/super-admin/restaurants.html">Open onboarding requests</a></div></section>`;return `<section class="panel"><div class="panel-head"><h3>Recent orders</h3><a href="/restaurant/orders.html">View all -></a></div><div id="recent" class="empty">Your live activity will appear here as records are created.</div></section><section class="panel"><div class="panel-head"><h3>Quick actions</h3></div><div class="toolbar">${['Add a product','View orders','Manage inventory'].map((x,i)=>`<a class="btn btn-ghost" href="${['/restaurant/products.html','/restaurant/orders.html','/restaurant/inventory.html'][i]}">${x} -></a>`).join('')}</div></section>`}
+function legacyOverviewPanels(role,stats){if(role==='super_admin')return `<section class="panel"><div class="panel-head"><h3>Restaurant applications</h3><a href="/super-admin/restaurants.html">Review requests -></a></div><p class="section-intro">Approve an application to activate the restaurant and grant its owner access to the management workspace. Rejected applications stay inactive.</p><div class="toolbar"><a class="btn btn-primary" href="/super-admin/restaurants.html">Open onboarding requests</a></div></section>`;return `<section class="panel"><div class="panel-head"><h3>Recent orders</h3><a href="/restaurant/orders.html">View all -></a></div><div id="recent" class="empty">Your live activity will appear here as records are created.</div></section><section class="panel"><div class="panel-head"><h3>Quick actions</h3></div><div class="toolbar">${['Add a product','View orders','Manage inventory'].map((x,i)=>`<a class="btn btn-ghost" href="${['/restaurant/products.html','/restaurant/orders.html','/restaurant/inventory.html'][i]}">${x} -></a>`).join('')}</div></section>`}
+
+function overviewPanels(role, stats, orders = []) {
+  if (role === 'super_admin') return legacyOverviewPanels(role, stats);
+  const recentOrders = orders.length
+    ? `<div class="table-wrap"><table><thead><tr><th>Order</th><th>Guest</th><th>Table</th><th>Type</th><th>Status</th><th>Total</th></tr></thead><tbody>${orders.map(order => `<tr><td>${esc(String(order.order_number || '').padStart(6, '0'))}</td><td>${esc(order.guest_name || 'Guest')}</td><td>${esc(order.restaurant_tables?.table_number || '-')}</td><td>${esc(String(order.order_type || 'takeaway').replaceAll('_', ' '))}</td><td><span class="badge ${esc(order.status)}">${esc(order.status === 'completed' ? 'delivered' : order.status)}</span></td><td>${money(order.total)}</td></tr>`).join('')}</tbody></table></div>`
+    : '<div class="empty">No orders yet. New customer orders will appear here.</div>';
+  return `<section class="panel overview-recent-orders"><div class="panel-head"><div><h3>Recent orders</h3><span class="overview-panel-note">Latest activity from your restaurant</span></div><a href="/restaurant/orders.html">View all orders →</a></div>${recentOrders}</section><section class="panel"><div class="panel-head"><h3>Quick actions</h3></div><div class="toolbar"><a class="btn btn-ghost" href="/restaurant/products.html">Add a product →</a><a class="btn btn-ghost" href="/restaurant/orders.html">View orders →</a><a class="btn btn-ghost" href="/restaurant/inventory.html">Manage inventory →</a></div></section>`;
+}
 
 function restaurantSettingsPanel(restaurant) {
   if (!restaurant) return '<section class="panel"><div class="empty">Restaurant settings are unavailable.</div></section>';

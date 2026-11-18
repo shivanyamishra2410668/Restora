@@ -65,6 +65,7 @@
 @media(max-width:680px){.table-dish-detail{padding-top:22px}.table-dish-detail-layout{grid-template-columns:1fr;gap:24px}.table-dish-gallery{min-height:0;aspect-ratio:1.05}}
 @media(prefers-reduced-motion:reduce){.table-photo-gallery>.menu-product-image,.table-dish-photo{transition:none!important}}
 .table-photo-gallery>.menu-product-placeholder{opacity:1}
+.overview-panel-note{display:block;margin-top:5px;color:var(--muted);font-size:12px}
 
 /* Restora visual system: crisp edges, quiet surfaces, and no decorative gradients. */
 :root{--ink:#202722;--muted:#68736c;--line:#d9ded8;--paper:#f3f3ef;--white:#fff;--orange:#b95d32;--orange2:#f3e9df;--green:#355c4b;--nav:#1c2822;--shadow:none}
