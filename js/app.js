@@ -210,6 +210,17 @@ async function dashboard() {
 function bindDashboardFrame({ c, title, entity, restaurantId }) {
   document.querySelector('#logout').onclick = event => { event.preventDefault(); signOut(); };
   document.querySelector('#switch').onclick = () => { location.href = '/workspace.html'; };
+  document.querySelector('#sidebar-toggle')?.addEventListener('click', event => {
+    const button = event.currentTarget;
+    const workspace = button.closest('.workspace');
+    const collapsed = workspace.classList.toggle('sidebar-collapsed');
+    const label = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    localStorage.setItem('restora_sidebar_collapsed', String(collapsed));
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.title = label;
+    button.innerHTML = `${svgIcon(collapsed ? 'arrow-right' : 'arrow-left')}<span class="side-link-label">${label}</span>`;
+  });
   document.querySelector('#add')?.addEventListener('click', async event => {
     const button = event.currentTarget;
     setButtonLoading(button, title === 'Products' ? 'Loading menu options' : 'Opening form');
