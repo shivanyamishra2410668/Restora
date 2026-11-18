@@ -66,6 +66,8 @@
 @media(prefers-reduced-motion:reduce){.table-photo-gallery>.menu-product-image,.table-dish-photo{transition:none!important}}
 .table-photo-gallery>.menu-product-placeholder{opacity:1}
 .overview-panel-note{display:block;margin-top:5px;color:var(--muted);font-size:12px}
+.table-pagination{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 4px 2px;color:var(--muted);font-size:12px}.table-pagination-actions{display:flex;align-items:center;gap:8px}.table-pagination-actions label{display:flex;align-items:center;gap:6px}.table-pagination-actions select{padding:7px 9px;border:1px solid var(--line);background:#fff;color:var(--ink)}.table-pagination-actions .btn{padding:7px 10px;font-size:11px}.table-pagination-actions .btn:disabled{opacity:.45;cursor:not-allowed}.table-pagination-page{min-width:64px;text-align:center;color:var(--ink);font-weight:700}
+@media(max-width:580px){.table-pagination{align-items:flex-start;flex-direction:column;gap:10px}.table-pagination-actions{width:100%;justify-content:space-between;gap:5px}.table-pagination-actions .btn{padding:7px;font-size:10px}.table-pagination-actions label{font-size:10px}.table-pagination-actions select{padding:6px}}
 
 /* Restora visual system: crisp edges, quiet surfaces, and no decorative gradients. */
 :root{--ink:#202722;--muted:#68736c;--line:#d9ded8;--paper:#f3f3ef;--white:#fff;--orange:#b95d32;--orange2:#f3e9df;--green:#355c4b;--nav:#1c2822;--shadow:none}

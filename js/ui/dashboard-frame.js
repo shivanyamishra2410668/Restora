@@ -1,4 +1,5 @@
 import { svgIcon } from './icons.js';
+import { paginateTables } from './table-pagination.js';
 
 export function renderDashboardFrame({ app, brand, c, role, title, links, routeMap, entity, subtitle, configWarning, loadingContent }) {
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -14,4 +15,5 @@ export function renderDashboardData({ app, statsHtml = '', errorHtml = '', conte
   app.removeAttribute('aria-busy');
   container.removeAttribute('aria-busy');
   container.innerHTML = `${statsHtml}${errorHtml}${contentHtml}`;
+  paginateTables(container);
 }
