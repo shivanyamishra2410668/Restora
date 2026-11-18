@@ -1,0 +1,4 @@
+import { supabase } from '../config/supabase.js';
+export async function getContext(){ if(!supabase)return null; const {data:{session}}=await supabase.auth.getSession(); if(!session)return null; const [{data:profile,error:pErr},{data:members,error:mErr},{data:admins,error:aErr}]=await Promise.all([supabase.from('profiles').select('*').eq('id',session.user.id).maybeSingle(),supabase.from('restaurant_memberships').select('*,restaurants(id,name,status)').eq('user_id',session.user.id).eq('active',true),supabase.from('super_admins').select('user_id').eq('user_id',session.user.id).maybeSingle()]); if(pErr)throw pErr;if(mErr)throw mErr;if(aErr)throw aErr; return {session,user:session.user,profile,memberships:members||[],isSuperAdmin:!!admins}; }
+export async function requireUser(){ const c=await getContext(); if(!c){location.href='/login.html';return null;} return c; }
+export async function signOut(){await supabase.auth.signOut();location.href='/';}
